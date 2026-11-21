@@ -1,0 +1,4 @@
+station,url
+GOT RADIO,http://pureplay.cdnstream1.com/6024_128.mp3
+BBC,http://as-hls-ww-live.akamaized.net/pool_01505109/live/ww/bbc_radio_one/bbc_radio_one.isml/bbc_radio_one-audio%3d96000.norewind.m3u8
+Rt,https://icecast2.rte.ie:8000/radio1
