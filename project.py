@@ -7,9 +7,13 @@ from urllib.parse import urlsplit
 import equalizer
 
 
+def clear_screen():
+    os.system("cls" if os.name == "nt" else "clear")
+
+
 def main():
     while True:
-        os.system("clear")
+        clear_screen()
         get_channel = get_menu()
         validate(get_channel)
 
@@ -83,7 +87,7 @@ def validate(option):
         delete()
 
     elif option.lower() in ["exit", "q"]:
-        os.system("clear")
+        clear_screen()
         sys.exit()
 
     elif option.isdigit():
@@ -115,7 +119,7 @@ def add():
     stations = get_stations()
     while True:
         try:
-            os.system("clear")
+            clear_screen()
             print("=" * 42)
             print("Add a station".center(42))
             print("=" * 42)
@@ -154,7 +158,7 @@ def add():
 def delete():
     stations = get_stations()
     while True:
-        os.system("clear")
+        clear_screen()
         try:
             print("=" * 42)
             print("Remove a station".center(42))
@@ -197,7 +201,7 @@ def play(option):
                 listen = stations[option]
                 if debug_mode:
                     try:
-                        os.system("clear")
+                        clear_screen()
                         subprocess.run(
                             ["mpv", listen["url"]]
                         )

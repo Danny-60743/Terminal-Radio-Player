@@ -1,9 +1,10 @@
 import os
 from itertools import cycle
-import selectors
+import queue
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 import numpy as np
@@ -90,6 +91,20 @@ def show_connecting(symbol):
     )
 
 
+def read_audio(stream, audio_queue):
+    """Read decoder output in a background thread (works with Windows pipes)."""
+    try:
+        while True:
+            data = os.read(stream.fileno(), CHUNK_BYTES)
+            if not data:
+                break
+            audio_queue.put(data)
+    except OSError as error:
+        audio_queue.put(error)
+    finally:
+        audio_queue.put(None)
+
+
 def main(url):
     """Decode one stream and send the same audio to mpv and the display."""
     decoder = player = None
@@ -116,32 +131,40 @@ def main(url):
                 "-c:a", "pcm_s16le", "-f", "s16le", "pipe:1",
             ], stdout=subprocess.PIPE, stderr=decoder_errors, bufsize=0)
 
-            with selectors.DefaultSelector() as selector:
-                selector.register(decoder.stdout, selectors.EVENT_READ)
-                pending = bytearray()
-                while True:
-                    if player.poll() is not None:
-                        raise RuntimeError("The audio player stopped")
-                    if connecting and time.monotonic() >= next_spin:
-                        show_connecting(next(spinner))
-                        next_spin = time.monotonic() + 0.1
-                    if not selector.select(timeout=0.1):
-                        continue
-                    data = os.read(decoder.stdout.fileno(), CHUNK_BYTES - len(pending))
-                    ended = not data
-                    if ended:
-                        decoder.wait(timeout=3)
-                        if decoder.returncode:
-                            raise RuntimeError("Could not decode this station")
-                        if not pending:
-                            break
-                    else:
-                        pending.extend(data)
-                        if len(pending) < CHUNK_BYTES:
-                            continue
+            audio_queue = queue.Queue()
+            reader = threading.Thread(
+                target=read_audio, args=(decoder.stdout, audio_queue), daemon=True
+            )
+            reader.start()
+            pending = bytearray()
+            ended = False
+            while not ended or pending:
+                if player.poll() is not None:
+                    raise RuntimeError("The audio player stopped")
+                if connecting and time.monotonic() >= next_spin:
+                    show_connecting(next(spinner))
+                    next_spin = time.monotonic() + 0.1
+                try:
+                    data = audio_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if isinstance(data, OSError):
+                    raise data
+                if data is None:
+                    ended = True
+                    decoder.wait(timeout=3)
+                    if decoder.returncode:
+                        raise RuntimeError("Could not decode this station")
+                    if len(pending) < 2:
+                        pending.clear()
+                        break
+                else:
+                    pending.extend(data)
 
-                    chunk = bytes(pending)
-                    pending.clear()
+                while len(pending) >= CHUNK_BYTES or (ended and len(pending) >= 2):
+                    chunk_size = CHUNK_BYTES if len(pending) >= CHUNK_BYTES else len(pending) // 2 * 2
+                    chunk = bytes(pending[:chunk_size])
+                    del pending[:chunk_size]
                     player.stdin.write(chunk)
                     player.stdin.flush()
                     samples = np.frombuffer(chunk, dtype="<i2").astype(np.float64) / 32768.0
@@ -152,8 +175,6 @@ def main(url):
                         "\033[2K" + line for line in "\n".join(lines).splitlines())
                     print("\033[H" + output + "\033[J", end="", flush=True)
                     connecting = False
-                    if ended:
-                        break
 
             # On a natural end, let mpv finish the audio already in its buffer.
             player.stdin.close()
